@@ -8,7 +8,6 @@ import logging
 from typing import Optional
 
 from lxml import etree
-from numpy.ma.core import true_divide
 from qc_baselib import IssueSeverity
 
 from qc_opendrive import basic_preconditions
