@@ -34,6 +34,142 @@ def to_float(s):
         return None
 
 
+# Only sibling groups larger than this get the paths of their children cached.
+# Smaller groups are counted on demand and nothing is stored for them.
+#
+# The threshold is on the structure, not a round number. getpath's cost is the
+# sum over an element's ancestors of each one's position among its siblings, so
+# caching only pays where a sibling group is big. In OpenDRIVE exactly one group
+# grows with the map: the road elements under OpenDRIVE. Every other group is
+# bounded by the road it describes -- lanes under a laneSection side, width
+# records under a lane, signals under a road. Counting the children of
+# /OpenDRIVE and of any laneSection in a real document shows the two populations
+# orders of magnitude apart, and 32 sits in that gap with room on both sides.
+#
+# A junction with more than 32 connection children is caught by this too. That
+# is correct rather than accidental: it is another group whose size grows with
+# the intersection it describes, so it is one where the positional walk starts
+# to cost.
+_CACHE_SIBLING_THRESHOLD = 32
+
+
+class MemoisedPathTree:
+    """An etree._ElementTree proxy whose getpath() caches the costly part.
+
+    getpath() is libxml2's xmlGetNodePath, which walks an element's preceding
+    siblings at every level to build the positional predicate. Under /OpenDRIVE
+    those siblings are the roads, so one call costs O(road index) and any
+    checker that reports an issue per road makes the bundle quadratic in the
+    size of the map.
+
+    Paths are rebuilt level by level rather than delegated, because lxml offers
+    no way to ask for the tail of a path: any call into the real getpath() walks
+    from the root and so pays the road-level scan this class exists to avoid.
+    The threshold above decides only what gets stored, never whether a level is
+    computed here.
+
+    Returns exactly what the wrapped tree's getpath() returns. The cache assumes
+    the tree is not restructured while it is in use, which holds for the bundle:
+    the checkers only read.
+    """
+
+    def __init__(self, tree: etree._ElementTree):
+        self._tree = tree
+        self._paths = {}
+        self._numbered_parents = set()
+
+    @staticmethod
+    def _is_plain(element: etree._Element) -> bool:
+        """Whether this element is one whose path we may build ourselves.
+
+        Comments and processing instructions carry a callable tag and are pathed
+        by kind rather than by name. An element in a namespace is pathed with
+        the prefix the document declares, which the {uri}local tag does not
+        record. Both are left to lxml, which is safe despite the cost the class
+        exists to avoid: the bundle reports its issues against plain OpenDRIVE
+        elements, so neither is on the hot path.
+        """
+        tag = element.tag
+        return isinstance(tag, str) and not tag.startswith("{")
+
+    @staticmethod
+    def _predicate(parent: etree._Element, element: etree._Element, tag: str) -> str:
+        """tag or tag[n], by libxml2's rule: an index only when a sibling shares
+        the tag."""
+        position = 0
+        total = 0
+
+        for child in parent:
+            if child.tag != tag:
+                continue
+            total += 1
+            if child is element:
+                position = total
+
+        return tag if total <= 1 else f"{tag}[{position}]"
+
+    def _number_children(self, parent: etree._Element, parent_path: str) -> None:
+        """Cache a path for every child of parent whose path we may build."""
+        totals = {}
+        for child in parent:
+            if self._is_plain(child):
+                totals[child.tag] = totals.get(child.tag, 0) + 1
+
+        seen = {}
+        for child in parent:
+            if not self._is_plain(child):
+                continue
+
+            tag = child.tag
+            position = seen.get(tag, 0) + 1
+            seen[tag] = position
+
+            if totals[tag] > 1:
+                self._paths[child] = f"{parent_path}/{tag}[{position}]"
+            else:
+                self._paths[child] = f"{parent_path}/{tag}"
+
+        self._numbered_parents.add(parent)
+
+    def getpath(self, element: etree._Element) -> str:
+        cached = self._paths.get(element)
+        if cached is not None:
+            return cached
+
+        if not self._is_plain(element):
+            return str(self._tree.getpath(element))
+
+        parent = element.getparent()
+        if parent is None:
+            # The root, whose own path has no preceding siblings to walk.
+            path = str(self._tree.getpath(element))
+            self._paths[element] = path
+            return path
+
+        parent_path = self.getpath(parent)
+
+        # A parent that has been numbered had all of its children cached, so the
+        # lookup above would have hit; reaching here means this parent is either
+        # unseen or small. len() is O(children), which is the cost being decided
+        # about: paid once for a big group before it is cached, and trivially for
+        # a small group on every call.
+        if parent not in self._numbered_parents:
+            if len(parent) <= _CACHE_SIBLING_THRESHOLD:
+                return f"{parent_path}/{self._predicate(parent, element, element.tag)}"
+
+            self._number_children(parent, parent_path)
+
+        return self._paths[element]
+
+    def __getattr__(self, name: str):
+        # Guard the delegate itself: reaching here for an attribute set in
+        # __init__ would mean it is not set yet, and forwarding would recurse.
+        if name in ("_tree", "_paths", "_numbered_parents"):
+            raise AttributeError(name)
+
+        return getattr(self._tree, name)
+
+
 def get_root_without_default_namespace(path: str) -> etree._ElementTree:
     with open(path, "rb") as raw_file:
         xml_string = raw_file.read().decode()
