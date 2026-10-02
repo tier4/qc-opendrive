@@ -99,15 +99,15 @@ def _xcessor_contact_point_has_issue(
     return None
 
 
-def _check_junctions_connection_lane_follow_direction(
+def _check_road_geometry_contact_point(
     checker_data: models.CheckerData,
 ) -> None:
     roads = utils.get_roads(checker_data.input_file_xml_root)
     road_id_map = utils.get_road_id_map(checker_data.input_file_xml_root)
 
     for road in roads:
-        # if it is a junction, rule does not apply
-        if utils.to_int(road.get("junction")) == 1:
+        # the rule does not apply to roads that belong to a junction
+        if utils.road_belongs_to_junction(road):
             continue
 
         road_link = road.find("link")
@@ -154,4 +154,4 @@ def check_rule(checker_data: models.CheckerData) -> None:
         the issue description message.
     """
     logging.info("Executing road.geometry.contact_point check")
-    _check_junctions_connection_lane_follow_direction(checker_data)
+    _check_road_geometry_contact_point(checker_data)

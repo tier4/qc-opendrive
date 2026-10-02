@@ -36,6 +36,29 @@ def test_get_junction_id_map() -> None:
     assert len(junction_id_map) == 1
 
 
+@pytest.mark.parametrize(
+    "junction,expected",
+    [
+        (None, False),
+        ("-1", False),
+        (" -1 ", False),
+        ("-1.0", False),
+        ("-01", False),
+        ("", False),
+        ("  ", False),
+        ("1", True),
+        ("7", True),
+        ("0", True),
+        ("j7", True),
+    ],
+)
+def test_road_belongs_to_junction(junction, expected) -> None:
+    road = etree.Element("road")
+    if junction is not None:
+        road.set("junction", junction)
+    assert utils.road_belongs_to_junction(road) == expected
+
+
 def test_get_point_xyz_from_road_invalid_s() -> None:
     root = utils.get_root_without_default_namespace("tests/data/utils/simple_line.xodr")
 
