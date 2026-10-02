@@ -170,14 +170,14 @@ class MemoisedPathTree:
         return getattr(self._tree, name)
 
 
-def get_root_without_default_namespace(path: str) -> MemoisedPathTree:
+def get_root_without_default_namespace(path: str) -> etree._ElementTree:
     with open(path, "rb") as raw_file:
         xml_string = raw_file.read().decode()
 
         if "xmlns" in xml_string:
             xml_string = re.sub(' xmlns="[^"]+"', "", xml_string)
 
-        return MemoisedPathTree(etree.parse(BytesIO(xml_string.encode())))
+        return etree.parse(BytesIO(xml_string.encode()))
 
 
 def get_lanes(root: etree._ElementTree) -> List[etree._ElementTree]:

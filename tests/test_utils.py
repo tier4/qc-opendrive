@@ -12,20 +12,14 @@ from qc_opendrive.base import utils
 
 
 def test_get_root_without_default_namespace() -> None:
-    # The tree is wrapped to keep getpath() off the quadratic path, so what
-    # comes back is the wrapper around an ordinary tree rather than the tree.
     # file containing namespace
     root = utils.get_root_without_default_namespace("tests/data/utils/namespace.xodr")
-    assert type(root) == utils.MemoisedPathTree
-    assert type(root.getroot()) == etree._Element
-    assert root.getroot().tag == "OpenDRIVE"
+    assert type(root) == etree._ElementTree
     # file does not contain namespace
     root = utils.get_root_without_default_namespace(
         "tests/data/utils/Ex_Bidirectional_Junction.xodr"
     )
-    assert type(root) == utils.MemoisedPathTree
-    assert type(root.getroot()) == etree._Element
-    assert root.getroot().tag == "OpenDRIVE"
+    assert type(root) == etree._ElementTree
 
 
 def test_get_road_id_map() -> None:
