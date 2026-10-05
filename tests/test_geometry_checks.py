@@ -7,8 +7,9 @@
 import os
 import pytest
 
-from typing import List
+from typing import List, Optional
 
+from lxml import etree
 from qc_baselib import IssueSeverity
 from qc_opendrive.checks import geometry
 
@@ -250,32 +251,6 @@ def test_road_geometry_param_poly3_normalized_range(
                 "/OpenDRIVE/road[1]",
             ],
         ),
-        # Copies of tests/data/junctions_connection_one_link_to_incoming/Ex_Bidirectional_Junction_valid.xodr
-        # with the junction id changed. The reference line of a connecting road is
-        # laterally offset from the incoming road, so the rule must not be applied
-        # to roads that belong to a junction.
-        (
-            "valid_junction_road",
-            0,
-            [],
-        ),
-        # The same junction with a non-numeric junction id, which road@junction
-        # allows since it is an xs:string.
-        (
-            "valid_junction_road_string_id",
-            0,
-            [],
-        ),
-        # The same junction plus a pair of directly connected roads whose successor
-        # contact point is wrong: the junction roads stay skipped while the road
-        # that does not belong to a junction is still reported.
-        (
-            "invalid_junction_and_road",
-            1,
-            [
-                "/OpenDRIVE/road[7]",
-            ],
-        ),
     ],
 )
 def test_road_geometry_contact_point(
@@ -297,6 +272,90 @@ def test_road_geometry_contact_point(
         issue_count,
         issue_xpath,
         issue_severity,
+        geometry.road_geometry_contact_point.CHECKER_ID,
+    )
+    cleanup_files()
+
+
+JUNCTION_EXAMPLE = "tests/data/junctions_connection_one_link_to_incoming/Ex_Bidirectional_Junction_valid.xodr"
+
+
+def _junction_example_variant(
+    tmp_path, junction_id: str, extra_roads_file: Optional[str] = None
+) -> str:
+    """The bidirectional junction example with its junction id replaced, and
+    optionally extra roads inserted before the junction, written to tmp_path."""
+    tree = etree.parse(JUNCTION_EXAMPLE)
+    root = tree.getroot()
+    junction = root.find("junction")
+    original_id = junction.get("id")
+
+    junction.set("id", junction_id)
+    for road in root.iter("road"):
+        if road.get("junction") == original_id:
+            road.set("junction", junction_id)
+        for link in road.iter("predecessor", "successor"):
+            if (
+                link.get("elementType") == "junction"
+                and link.get("elementId") == original_id
+            ):
+                link.set("elementId", junction_id)
+
+    if extra_roads_file is not None:
+        for road in etree.parse(extra_roads_file).getroot().iter("road"):
+            junction.addprevious(road)
+
+    # Every reference to the original id must have been replaced, or the variant
+    # silently tests the original junction.
+    assert not root.xpath(
+        "//road[@junction=$id] | //*[@elementType='junction'][@elementId=$id]",
+        id=original_id,
+    )
+
+    path = tmp_path / f"junction_{junction_id}.xodr"
+    tree.write(str(path), xml_declaration=True, encoding="utf-8")
+    return str(path)
+
+
+@pytest.mark.parametrize(
+    "junction_id,extra_roads_file,issue_count,issue_xpath",
+    [
+        # The reference line of a connecting road is laterally offset from the
+        # incoming road, so the rule must not be applied to roads that belong to a
+        # junction, whatever its id.
+        ("7", None, 0, []),
+        # A non-numeric junction id, which road@junction allows since it is an
+        # xs:string.
+        ("j7", None, 0, []),
+        # The same junction plus a pair of directly connected roads whose
+        # successor contact point is wrong: the junction roads stay skipped while
+        # the road that does not belong to a junction is still reported.
+        (
+            "7",
+            "tests/data/road_geometry_contact_point/directly_connected_roads_wrong_contact_point.xml",
+            1,
+            ["/OpenDRIVE/road[7]"],
+        ),
+    ],
+)
+def test_road_geometry_contact_point_junction_variants(
+    junction_id: str,
+    extra_roads_file: Optional[str],
+    issue_count: int,
+    issue_xpath: List[str],
+    tmp_path,
+    monkeypatch,
+) -> None:
+    target_file_path = _junction_example_variant(
+        tmp_path, junction_id, extra_roads_file
+    )
+    create_test_config(target_file_path)
+    launch_main(monkeypatch)
+    check_issues(
+        "asam.net:xodr:1.7.0:road.geometry.contact_point",
+        issue_count,
+        issue_xpath,
+        IssueSeverity.ERROR,
         geometry.road_geometry_contact_point.CHECKER_ID,
     )
     cleanup_files()
