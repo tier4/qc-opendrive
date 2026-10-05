@@ -303,6 +303,40 @@ def test_road_geometry_contact_point(
 
 
 @pytest.mark.parametrize(
+    "target_file,unchecked",
+    [
+        ("valid_1", False),
+        ("valid_missing_link", False),
+        ("valid_unevaluable_geometry", True),
+    ],
+)
+def test_road_geometry_contact_point_reports_unchecked_connections(
+    target_file: str,
+    unchecked: bool,
+    monkeypatch,
+) -> None:
+    # A road whose reference line cannot be evaluated is skipped without an
+    # issue, which must not read as a clean result: the summary says so.
+    base_path = "tests/data/road_geometry_contact_point/"
+    target_file_path = os.path.join(base_path, f"{target_file}.xodr")
+    create_test_config(target_file_path)
+    launch_main(monkeypatch)
+
+    result = Result()
+    result.load_from_file(REPORT_FILE_PATH)
+    summary = result.get_checker_result(
+        constants.BUNDLE_NAME, geometry.road_geometry_contact_point.CHECKER_ID
+    ).summary
+    assert ("were not checked" in summary) == unchecked
+    assert (
+        result.get_checker_status(geometry.road_geometry_contact_point.CHECKER_ID)
+        == StatusType.COMPLETED
+    )
+
+    cleanup_files()
+
+
+@pytest.mark.parametrize(
     "target_file,issue_count,issue_xpath",
     [
         (
