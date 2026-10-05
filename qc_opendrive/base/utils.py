@@ -68,15 +68,22 @@ class MemoisedPathTree:
     The threshold above decides only what gets stored, never whether a level is
     computed here.
 
-    Returns exactly what the wrapped tree's getpath() returns. The cache assumes
-    the tree is not restructured while it is in use, which holds for the bundle:
-    the checkers only read.
+    Returns exactly what the wrapped tree's getpath() returns, including for a
+    tree rooted below the document root. The cache assumes the tree is not
+    restructured while it is in use, which holds for the bundle: the checkers
+    only read. A child added to a large group is numbered on its first lookup
+    rather than failing, but paths already handed out are not revised.
     """
 
     def __init__(self, tree: etree._ElementTree):
         self._tree = tree
         self._paths = {}
-        self._numbered_parents = set()
+        self._root = tree.getroot()
+        # lxml paths the descendants of a subtree's root from that root, as a
+        # bare /tag, while the root itself keeps its path in the document.
+        self._subtree_prefix = (
+            f"/{self._root.tag}" if self._root.getparent() is not None else None
+        )
 
     @staticmethod
     def _is_plain(element: etree._Element) -> bool:
@@ -129,8 +136,6 @@ class MemoisedPathTree:
             else:
                 self._paths[child] = f"{parent_path}/{tag}"
 
-        self._numbered_parents.add(parent)
-
     def getpath(self, element: etree._Element) -> str:
         cached = self._paths.get(element)
         if cached is not None:
@@ -140,31 +145,38 @@ class MemoisedPathTree:
             return str(self._tree.getpath(element))
 
         parent = element.getparent()
-        if parent is None:
-            # The root, whose own path has no preceding siblings to walk.
+        if parent is None or element is self._root:
+            # The root of the wrapped tree, whose own path has no preceding
+            # siblings to walk. Stopping here rather than at the document root
+            # keeps a tree wrapped around a subtree pathed from its own root.
             path = str(self._tree.getpath(element))
             self._paths[element] = path
             return path
 
-        parent_path = self.getpath(parent)
+        if parent is self._root and self._subtree_prefix is not None:
+            parent_path = self._subtree_prefix
+        else:
+            parent_path = self.getpath(parent)
 
-        # A parent that has been numbered had all of its children cached, so the
-        # lookup above would have hit; reaching here means this parent is either
-        # unseen or small. len() is O(children), which is the cost being decided
-        # about: paid once for a big group before it is cached, and trivially for
-        # a small group on every call.
-        if parent not in self._numbered_parents:
-            if len(parent) <= _CACHE_SIBLING_THRESHOLD:
-                return f"{parent_path}/{self._predicate(parent, element, element.tag)}"
+        # Numbering a group caches every child in it, so the lookup above would
+        # have hit; reaching here means the group is small, not yet numbered, or
+        # gained this child since. len() is O(children), which is the cost being
+        # decided about: paid once for a big group before it is cached, and
+        # trivially for a small group on every call.
+        if len(parent) <= _CACHE_SIBLING_THRESHOLD:
+            return f"{parent_path}/{self._predicate(parent, element, element.tag)}"
 
-            self._number_children(parent, parent_path)
-
+        self._number_children(parent, parent_path)
         return self._paths[element]
+
+    def cached_path_count(self) -> int:
+        """How many paths are stored, for checking what the cache holds on to."""
+        return len(self._paths)
 
     def __getattr__(self, name: str):
         # Guard the delegate itself: reaching here for an attribute set in
         # __init__ would mean it is not set yet, and forwarding would recurse.
-        if name in ("_tree", "_paths", "_numbered_parents"):
+        if name in ("_tree", "_paths", "_root", "_subtree_prefix"):
             raise AttributeError(name)
 
         return getattr(self._tree, name)

@@ -432,8 +432,59 @@ def test_memoised_path_tree_caches_only_large_sibling_groups() -> None:
 
     # Only the roads earn an entry, plus the root's own path: the groups below a
     # road are small, and caching them would cost memory for nothing.
-    assert len(memoised._paths) == 129
-    assert len(memoised._numbered_parents) == 1
+    assert memoised.cached_path_count() == 129
+
+
+def test_memoised_path_tree_paths_a_subtree_from_its_own_root() -> None:
+    root = etree.Element("OpenDRIVE")
+    for _ in range(40):
+        road = etree.SubElement(root, "road")
+        etree.SubElement(road, "planView")
+    subtree = etree.ElementTree(root[5])
+
+    memoised = utils.MemoisedPathTree(subtree)
+
+    for node in root[5].iter():
+        assert memoised.getpath(node) == subtree.getpath(node)
+    # lxml paths a subtree's descendants from its root as a bare /tag, while the
+    # root itself keeps its path in the document.
+    assert memoised.getpath(root[5]) == "/OpenDRIVE/road[6]"
+    assert memoised.getpath(root[5][0]) == "/road/planView"
+
+    compared = 0
+    for random_generator, tree in _random_trees(10, seed=7):
+        candidates = [
+            node
+            for node in tree.getroot().iter()
+            if isinstance(node.tag, str) and not node.tag.startswith("{")
+        ]
+        for sub_root in random_generator.sample(candidates, min(15, len(candidates))):
+            subtree = etree.ElementTree(sub_root)
+            memoised = utils.MemoisedPathTree(subtree)
+            for node in sub_root.iter():
+                assert memoised.getpath(node) == subtree.getpath(node)
+                compared += 1
+    assert compared > 500
+
+
+def test_memoised_path_tree_numbers_a_child_added_to_a_large_group() -> None:
+    root = etree.Element("OpenDRIVE")
+    for _ in range(40):
+        etree.SubElement(root, "road")
+    tree = etree.ElementTree(root)
+
+    memoised = utils.MemoisedPathTree(tree)
+    for road in root:
+        memoised.getpath(road)
+
+    appended = etree.SubElement(root, "road")
+    assert memoised.getpath(appended) == tree.getpath(appended) == "/OpenDRIVE/road[41]"
+
+    inserted = etree.Element("road")
+    root.insert(0, inserted)
+    assert memoised.getpath(inserted) == tree.getpath(inserted) == "/OpenDRIVE/road[1]"
+    # Numbering the group again on that miss brought its other children up to date.
+    assert memoised.getpath(appended) == tree.getpath(appended) == "/OpenDRIVE/road[42]"
 
 
 def test_memoised_path_tree_delegates_the_rest_of_the_tree_api() -> None:
@@ -472,6 +523,9 @@ class _CountingTree:
     def __init__(self, tree: etree._ElementTree):
         self._tree = tree
         self.getpath_calls = 0
+
+    def getroot(self) -> etree._Element:
+        return self._tree.getroot()
 
     def getpath(self, element: etree._Element) -> str:
         self.getpath_calls += 1
