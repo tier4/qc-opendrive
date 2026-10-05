@@ -5,7 +5,7 @@
 # with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import logging
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from lxml import etree
 from qc_baselib import IssueSeverity
@@ -55,19 +55,17 @@ def _raise_issue(
         )
 
 
-def _xcessor_contact_point_has_issue(
+# Road ids listed in the checker summary for connections left unchecked. The
+# count is always reported in full; only the list is cut short.
+UNCHECKED_ROAD_IDS_SHOWN = 10
+
+
+def _get_xcessor_road_and_contact_point(
     xcessor: etree._Element,
-    road_contact_point_xyz: Optional[models.Point3D],
     road_id_map: dict,
-) -> Optional[models.Point3D]:
-    if xcessor is None:
-        return None
-
-    # the road's own reference line point is unavailable when its geometry
-    # cannot be evaluated; there is nothing to compare against then.
-    if road_contact_point_xyz is None:
-        return None
-
+) -> Optional[Tuple[etree._Element, str]]:
+    """The linked road and the contact point on it, or None when the link is
+    not a road-to-road connection this rule can check."""
     if xcessor.get("elementType") == "junction":
         return None
 
@@ -76,27 +74,42 @@ def _xcessor_contact_point_has_issue(
         return None
 
     contact_point = xcessor.get("contactPoint")
-    if contact_point is None:
+    if contact_point not in (models.ContactPoint.START, models.ContactPoint.END):
         return None
 
-    xcessor_contact_point_xyz = utils.get_point_xyz_from_contact_point(
-        xcessor_road, contact_point
-    )
-    if xcessor_contact_point_xyz is None:
-        return None
+    return xcessor_road, contact_point
 
+
+def _points_differ(a: models.Point3D, b: models.Point3D) -> bool:
     # allow error in the order of 1e-6 for floating point comparison of coordinates
-    if any(
-        abs(
-            getattr(road_contact_point_xyz, attr)
-            - getattr(xcessor_contact_point_xyz, attr)
-        )
-        >= FLOAT_COMPARISON_THRESHOLD
+    return any(
+        abs(getattr(a, attr) - getattr(b, attr)) >= FLOAT_COMPARISON_THRESHOLD
         for attr in ("x", "y", "z")
-    ):
-        return xcessor_contact_point_xyz
+    )
 
-    return None
+
+def _report_unchecked_connections(
+    checker_data: models.CheckerData,
+    unchecked_road_ids: List[str],
+) -> None:
+    if not unchecked_road_ids:
+        return
+
+    shown = ", ".join(unchecked_road_ids[:UNCHECKED_ROAD_IDS_SHOWN])
+    if len(unchecked_road_ids) > UNCHECKED_ROAD_IDS_SHOWN:
+        shown += ", ..."
+
+    message = (
+        f"{len(unchecked_road_ids)} road connection(s) were not checked because "
+        "a road reference line could not be evaluated (e.g. unsupported "
+        f"<poly3> geometry). Road id(s): {shown}."
+    )
+    logging.warning(message)
+    checker_data.result.add_checker_summary(
+        constants.BUNDLE_NAME,
+        CHECKER_ID,
+        message,
+    )
 
 
 def _check_junctions_connection_lane_follow_direction(
@@ -104,6 +117,7 @@ def _check_junctions_connection_lane_follow_direction(
 ) -> None:
     roads = utils.get_roads(checker_data.input_file_xml_root)
     road_id_map = utils.get_road_id_map(checker_data.input_file_xml_root)
+    unchecked_road_ids = []
 
     for road in roads:
         # if it is a junction, rule does not apply
@@ -125,16 +139,37 @@ def _check_junctions_connection_lane_follow_direction(
         )
 
         for xcessor, get_road_contact_point_xyz in (road_start, road_end):
-            # <predecessor> and <successor> are optional as well; evaluating the
-            # reference line is pointless when there is nothing to compare against.
+            # <predecessor> and <successor> are optional as well.
             if xcessor is None:
                 continue
 
-            xcessor_contact_point_xyz_with_issue = _xcessor_contact_point_has_issue(
-                xcessor, get_road_contact_point_xyz(road), road_id_map
+            xcessor_road_and_contact_point = _get_xcessor_road_and_contact_point(
+                xcessor, road_id_map
             )
-            if xcessor_contact_point_xyz_with_issue is not None:
-                _raise_issue(checker_data, road, xcessor_contact_point_xyz_with_issue)
+            if xcessor_road_and_contact_point is None:
+                continue
+            xcessor_road, contact_point = xcessor_road_and_contact_point
+
+            # Reference lines are evaluated only once there is a road to compare
+            # against: spiral and paramPoly3 integrate numerically, and a link to
+            # a junction needs neither point.
+            road_contact_point_xyz = get_road_contact_point_xyz(road)
+            xcessor_contact_point_xyz = (
+                utils.get_point_xyz_from_contact_point(xcessor_road, contact_point)
+                if road_contact_point_xyz is not None
+                else None
+            )
+
+            # A reference line that cannot be evaluated leaves the connection
+            # unchecked. Record it so that it does not pass as a clean result.
+            if road_contact_point_xyz is None or xcessor_contact_point_xyz is None:
+                unchecked_road_ids.append(str(road.get("id")))
+                continue
+
+            if _points_differ(road_contact_point_xyz, xcessor_contact_point_xyz):
+                _raise_issue(checker_data, road, xcessor_contact_point_xyz)
+
+    _report_unchecked_connections(checker_data, unchecked_road_ids)
 
 
 def check_rule(checker_data: models.CheckerData) -> None:
