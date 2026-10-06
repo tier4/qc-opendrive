@@ -231,9 +231,22 @@ def test_road_geometry_param_poly3_normalized_range(
             [],
         ),
         (
-            "valid_unevaluable_geometry",
+            "valid_poly3",
             0,
             [],
+        ),
+        (
+            "valid_poly3_curved",
+            0,
+            [],
+        ),
+        (
+            "invalid_poly3_curved",
+            2,
+            [
+                "/OpenDRIVE/road[1]",
+                "/OpenDRIVE/road[2]",
+            ],
         ),
         (
             "unevaluable_geometry",
@@ -312,7 +325,8 @@ def test_road_geometry_contact_point(
     [
         ("valid_1", False),
         ("valid_missing_link", False),
-        ("valid_unevaluable_geometry", True),
+        ("valid_poly3", False),
+        ("valid_poly3_curved", False),
         ("unevaluable_geometry", True),
     ],
 )

@@ -4,12 +4,16 @@
 # Public License, v. 2.0. If a copy of the MPL was not distributed
 # with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import math
 import re
 import numpy as np
+from functools import lru_cache
 from io import BytesIO
-from typing import List, Dict, Union, Optional
+from typing import List, Dict, Tuple, Union, Optional
 from lxml import etree
 import pyclothoids as pc
+from scipy.integrate import quad
+from scipy.optimize import brentq
 import transforms3d
 
 from qc_opendrive.base import models
@@ -493,6 +497,23 @@ def get_arclen_param_poly3_from_geometry(
         return None
 
 
+def get_poly3_from_geometry(geometry: etree._ElementTree) -> Optional[models.Poly3]:
+    """The deprecated <poly3> plan-view element, v(u) = a + b*u + c*u^2 + d*u^3."""
+    poly3 = geometry.find("poly3")
+    if poly3 is None:
+        return None
+
+    parsed = models.Poly3(
+        a=to_float(poly3.get("a")),
+        b=to_float(poly3.get("b")),
+        c=to_float(poly3.get("c")),
+        d=to_float(poly3.get("d")),
+    )
+    if any(value is None for value in (parsed.a, parsed.b, parsed.c, parsed.d)):
+        return None
+    return parsed
+
+
 def arc_length_integrand(
     t: float, du: np.polynomial.Polynomial, dv: np.polynomial.Polynomial
 ) -> float:
@@ -504,6 +525,193 @@ def arc_length_integrand(
         - https://en.wikipedia.org/wiki/Arc_length
     """
     return np.sqrt(du(t) ** 2 + dv(t) ** 2)
+
+
+# Gauss-Legendre rule used to integrate the speed |(du, dv)| of a cubic curve
+# over one interval of its arc-length table. The speed is smooth (the square root
+# of a quartic that does not vanish on a valid curve), so 8 nodes per interval
+# are exact to well below a micrometre at the interval sizes used here.
+_GAUSS_NODES, _GAUSS_WEIGHTS = np.polynomial.legendre.leggauss(8)
+_GAUSS_RULE = list(zip(_GAUSS_NODES.tolist(), _GAUSS_WEIGHTS.tolist()))
+
+# Intervals in the arc-length table of one cubic curve. The table only seeds
+# Newton's method, so it needs to be close, not exact: interpolating in 64
+# intervals is within centimetres on strongly non-uniform curves, and two Newton
+# steps from there are within a micrometre.
+_ARC_LENGTH_TABLE_INTERVALS = 64
+_NEWTON_STEPS = 2
+
+
+class CubicArcLength:
+    """Maps arc length along a plane cubic curve (u(p), v(p)) to its parameter.
+
+    OpenDRIVE positions a point on a geometry by s, the arc length along the
+    reference line, while <paramPoly3> and <poly3> are polynomials in a parameter
+    that is not arc length: p for paramPoly3 and u, the local abscissa, for poly3.
+    Treating the parameter as proportional to s is exact only at the two ends and
+    can be off by metres in between.
+
+    A table of cumulative arc length over the parameter range gives a first
+    estimate by interpolation, which Newton's method on the exact arc length
+    refines. The table is built on the first point between the ends: most
+    lookups are for the start or end of a geometry, which need no table.
+    """
+
+    def __init__(
+        self,
+        u: np.polynomial.Polynomial,
+        v: np.polynomial.Polynomial,
+        p_end: float,
+    ):
+        self.u = u
+        self.v = v
+        self.du = u.deriv()
+        self.dv = v.deriv()
+        self.p_end = p_end
+        # Plain floats, highest degree first, for the scalar evaluation in
+        # Newton's method: on single values, numpy's per-call overhead dominates.
+        self._du_coefficients = [float(c) for c in self.du.coef[::-1]]
+        self._dv_coefficients = [float(c) for c in self.dv.coef[::-1]]
+        self._table = None
+
+    def _get_table(self) -> Tuple[np.ndarray, np.ndarray, List[float], List[float]]:
+        if self._table is None:
+            p = np.linspace(0.0, self.p_end, _ARC_LENGTH_TABLE_INTERVALS + 1)
+            segments = self._integrate(p[:-1], p[1:])
+            arc = np.concatenate([[0.0], np.cumsum(segments)])
+            self._table = (p, arc, p.tolist(), arc.tolist())
+        return self._table
+
+    @property
+    def total(self) -> float:
+        """The curve's arc length over its whole parameter range."""
+        return float(self._get_table()[1][-1])
+
+    def _speed(self, p):
+        return np.hypot(self.du(p), self.dv(p))
+
+    def _scalar_speed(self, p: float) -> float:
+        du = 0.0
+        for coefficient in self._du_coefficients:
+            du = du * p + coefficient
+        dv = 0.0
+        for coefficient in self._dv_coefficients:
+            dv = dv * p + coefficient
+        return math.hypot(du, dv)
+
+    def _integrate(self, a, b):
+        """Arc length from a to b, elementwise for arrays of interval ends."""
+        a = np.asarray(a, dtype=float)[..., None]
+        b = np.asarray(b, dtype=float)[..., None]
+        half = (b - a) / 2.0
+        nodes = half * _GAUSS_NODES + (a + b) / 2.0
+        return (half * _GAUSS_WEIGHTS * self._speed(nodes)).sum(axis=-1)
+
+    def _arc_length_to(self, p: float) -> float:
+        # The table is evenly spaced, so the interval holding p is found directly.
+        index = int(p / self.p_end * _ARC_LENGTH_TABLE_INTERVALS)
+        index = min(max(index, 0), _ARC_LENGTH_TABLE_INTERVALS - 1)
+        _, _, p_list, arc_list = self._get_table()
+        a = p_list[index]
+        half = (p - a) / 2.0
+        middle = (p + a) / 2.0
+        partial = 0.0
+        for node, weight in _GAUSS_RULE:
+            partial += weight * self._scalar_speed(half * node + middle)
+        return arc_list[index] + half * partial
+
+    def param_at_fraction(self, fraction: float) -> float:
+        """The parameter at the given fraction of the curve's arc length.
+
+        The ends are returned as they are rather than solved for, so a point at
+        the start or end of a geometry costs nothing extra and is exact.
+        """
+        if fraction <= 0.0:
+            return 0.0
+        if fraction >= 1.0:
+            return self.p_end
+
+        p_table, arc_table, _, _ = self._get_table()
+        target = fraction * float(arc_table[-1])
+        p = float(np.interp(target, arc_table, p_table))
+        for _ in range(_NEWTON_STEPS):
+            speed = self._scalar_speed(p)
+            if speed == 0.0:
+                break
+            p -= (self._arc_length_to(p) - target) / speed
+        return min(max(p, 0.0), self.p_end)
+
+
+@lru_cache(maxsize=4096)
+def _param_poly3_arc_length(
+    u_coefficients: Tuple[float, float, float, float],
+    v_coefficients: Tuple[float, float, float, float],
+    p_end: float,
+) -> CubicArcLength:
+    return CubicArcLength(
+        np.polynomial.Polynomial(u_coefficients),
+        np.polynomial.Polynomial(v_coefficients),
+        p_end,
+    )
+
+
+@lru_cache(maxsize=4096)
+def _poly3_arc_length(
+    v_coefficients: Tuple[float, float, float, float], length: float
+) -> CubicArcLength:
+    """The arc-length map of <poly3>, the graph of v(u) for u in [0, u_end].
+
+    u_end is not given: it is the u at which the curve's arc length reaches the
+    geometry's @length. Arc length grows at least as fast as u, so u_end lies in
+    [0, @length].
+    """
+    u = np.polynomial.Polynomial([0.0, 1.0])
+    v = np.polynomial.Polynomial(v_coefficients)
+    dv = v.deriv()
+
+    def arc_length_minus_length(u_end: float) -> float:
+        return quad(lambda t: np.sqrt(1.0 + dv(t) ** 2), 0.0, u_end)[0] - length
+
+    if arc_length_minus_length(length) <= 0.0:
+        # A straight poly3 (b = c = d = 0): u is arc length.
+        u_end = length
+    else:
+        u_end = brentq(arc_length_minus_length, 0.0, length, xtol=1e-12)
+
+    return CubicArcLength(u, v, u_end)
+
+
+def _param_poly3_param_at(
+    param_poly3: models.ParamPoly3, ds: float, length: float
+) -> Tuple[CubicArcLength, float]:
+    if param_poly3.range == models.ParamPoly3Range.NORMALIZED:
+        p_end = 1.0
+    else:
+        p_end = length
+    curve = _param_poly3_arc_length(
+        (param_poly3.u.a, param_poly3.u.b, param_poly3.u.c, param_poly3.u.d),
+        (param_poly3.v.a, param_poly3.v.b, param_poly3.v.c, param_poly3.v.d),
+        p_end,
+    )
+    # s runs over [0, @length]; the curve's own arc length may differ from
+    # @length (road.geometry.parampoly3.length_match reports that), so s is
+    # mapped proportionally, which keeps both ends of the geometry exact.
+    return curve, curve.param_at_fraction(ds / length)
+
+
+def _poly3_param_at(
+    poly3: models.Poly3, ds: float, length: float
+) -> Tuple[CubicArcLength, float]:
+    curve = _poly3_arc_length((poly3.a, poly3.b, poly3.c, poly3.d), length)
+    return curve, curve.param_at_fraction(ds / length)
+
+
+def _local_to_inertial(
+    u: float, v: float, x0: float, y0: float, heading: float
+) -> models.Point2D:
+    xt = (np.cos(heading) * u) - (np.sin(heading) * v) + x0
+    yt = (np.sin(heading) * u) + (np.cos(heading) * v) + y0
+    return models.Point2D(x=xt, y=yt)
 
 
 def get_contact_lane_section_from_linked_road(
@@ -1131,45 +1339,30 @@ def calculate_spiral_point(
     return models.Point2D(x=clothoid.X(s - s0), y=clothoid.Y(s - s0))
 
 
-def calculate_poly3_arclen_point(
+def calculate_param_poly3_point(
     s: float,
-    poly3_arclen: models.ParamPoly3,
-    s0: float,
-    x0: float,
-    y0: float,
-    heading: float,
-) -> models.Point2D:
-    x_poly3 = poly3_to_polynomial(poly3_arclen.u)
-    y_poly3 = poly3_to_polynomial(poly3_arclen.v)
-
-    x = x_poly3(s - s0)
-    y = y_poly3(s - s0)
-
-    xt = (np.cos(heading) * x) - (np.sin(heading) * y) + x0
-    yt = (np.sin(heading) * x) + (np.cos(heading) * y) + y0
-
-    return models.Point2D(x=xt, y=yt)
-
-
-def calculate_poly3_norm_point(
-    s: float,
-    poly3_norm: models.ParamPoly3,
+    param_poly3: models.ParamPoly3,
     s0: float,
     x0: float,
     y0: float,
     heading: float,
     length: float,
 ) -> models.Point2D:
-    x_poly3 = poly3_to_polynomial(poly3_norm.u)
-    y_poly3 = poly3_to_polynomial(poly3_norm.v)
+    curve, p = _param_poly3_param_at(param_poly3, s - s0, length)
+    return _local_to_inertial(curve.u(p), curve.v(p), x0, y0, heading)
 
-    x = x_poly3((s - s0) / length)
-    y = y_poly3((s - s0) / length)
 
-    xt = (np.cos(heading) * x) - (np.sin(heading) * y) + x0
-    yt = (np.sin(heading) * x) + (np.cos(heading) * y) + y0
-
-    return models.Point2D(x=xt, y=yt)
+def calculate_poly3_point(
+    s: float,
+    poly3: models.Poly3,
+    s0: float,
+    x0: float,
+    y0: float,
+    heading: float,
+    length: float,
+) -> models.Point2D:
+    curve, u = _poly3_param_at(poly3, s - s0, length)
+    return _local_to_inertial(u, curve.v(u), x0, y0, heading)
 
 
 def get_point_xy_from_geometry(
@@ -1189,6 +1382,7 @@ def get_point_xy_from_geometry(
     spiral = get_geometry_spiral(geometry)
     poly3_arclen = get_arclen_param_poly3_from_geometry(geometry)
     poly3_norm = get_normalized_param_poly3_from_geometry(geometry)
+    poly3 = get_poly3_from_geometry(geometry)
 
     if line is not None:
         return calculate_line_point(s=s, s0=s0, x0=x0, y0=y0, heading=heading)
@@ -1224,19 +1418,20 @@ def get_point_xy_from_geometry(
             curv_end=curv_end,
             length=length,
         )
-    elif poly3_arclen is not None:
-        return calculate_poly3_arclen_point(
+    elif poly3_arclen is not None or poly3_norm is not None:
+        return calculate_param_poly3_point(
             s=s,
-            poly3_arclen=poly3_arclen,
+            param_poly3=poly3_arclen if poly3_arclen is not None else poly3_norm,
             s0=s0,
             x0=x0,
             y0=y0,
             heading=heading,
+            length=length,
         )
-    elif poly3_norm is not None:
-        return calculate_poly3_norm_point(
+    elif poly3 is not None:
+        return calculate_poly3_point(
             s=s,
-            poly3_norm=poly3_norm,
+            poly3=poly3,
             s0=s0,
             x0=x0,
             y0=y0,
@@ -1359,37 +1554,26 @@ def calculate_spiral_point_heading(
     return clothoid.Theta(s - s0)
 
 
-def calculate_poly3_arclen_heading(
+def calculate_param_poly3_heading(
     s: float,
-    poly3_arclen: models.ParamPoly3,
-    s0: float,
-    heading: float,
-) -> float:
-    x_poly3_deriv = poly3_to_polynomial(poly3_arclen.u).deriv()
-    y_poly3_deriv = poly3_to_polynomial(poly3_arclen.v).deriv()
-
-    x = x_poly3_deriv(s - s0)
-    y = y_poly3_deriv(s - s0)
-
-    heading = heading + np.arctan2(y, x)
-    return heading
-
-
-def calculate_poly3_norm_heading(
-    s: float,
-    poly3_norm: models.ParamPoly3,
+    param_poly3: models.ParamPoly3,
     s0: float,
     heading: float,
     length: float,
 ) -> float:
-    x_poly3_deriv = poly3_to_polynomial(poly3_norm.u).deriv()
-    y_poly3_deriv = poly3_to_polynomial(poly3_norm.v).deriv()
+    curve, p = _param_poly3_param_at(param_poly3, s - s0, length)
+    return heading + np.arctan2(curve.dv(p), curve.du(p))
 
-    x = x_poly3_deriv((s - s0) / length)
-    y = y_poly3_deriv((s - s0) / length)
 
-    heading = heading + np.arctan2(y, x)
-    return heading
+def calculate_poly3_heading(
+    s: float,
+    poly3: models.Poly3,
+    s0: float,
+    heading: float,
+    length: float,
+) -> float:
+    curve, u = _poly3_param_at(poly3, s - s0, length)
+    return heading + np.arctan2(curve.dv(u), 1.0)
 
 
 def get_heading_from_geometry_by_s(
@@ -1409,6 +1593,7 @@ def get_heading_from_geometry_by_s(
     spiral = get_geometry_spiral(geometry)
     poly3_arclen = get_arclen_param_poly3_from_geometry(geometry)
     poly3_norm = get_normalized_param_poly3_from_geometry(geometry)
+    poly3 = get_poly3_from_geometry(geometry)
 
     if line is not None:
         return heading
@@ -1441,17 +1626,18 @@ def get_heading_from_geometry_by_s(
             curv_end=curv_end,
             length=length,
         )
-    elif poly3_arclen is not None:
-        return calculate_poly3_arclen_heading(
+    elif poly3_arclen is not None or poly3_norm is not None:
+        return calculate_param_poly3_heading(
             s=s,
-            poly3_arclen=poly3_arclen,
+            param_poly3=poly3_arclen if poly3_arclen is not None else poly3_norm,
             s0=s0,
             heading=heading,
+            length=length,
         )
-    elif poly3_norm is not None:
-        return calculate_poly3_norm_heading(
+    elif poly3 is not None:
+        return calculate_poly3_heading(
             s=s,
-            poly3_norm=poly3_norm,
+            poly3=poly3,
             s0=s0,
             heading=heading,
             length=length,
