@@ -236,6 +236,11 @@ def test_road_geometry_param_poly3_normalized_range(
             [],
         ),
         (
+            "unevaluable_geometry",
+            0,
+            [],
+        ),
+        (
             "invalid",
             2,
             [
@@ -308,6 +313,7 @@ def test_road_geometry_contact_point(
         ("valid_1", False),
         ("valid_missing_link", False),
         ("valid_unevaluable_geometry", True),
+        ("unevaluable_geometry", True),
     ],
 )
 def test_road_geometry_contact_point_reports_unchecked_connections(
