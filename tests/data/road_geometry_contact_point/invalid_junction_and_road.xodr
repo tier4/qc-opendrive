@@ -1,4 +1,19 @@
 <?xml version="1.0" standalone="yes"?>
+<!--
+  Copy of tests/data/junctions_connection_one_link_to_incoming/Ex_Bidirectional_Junction_valid.xodr
+  (the ASAM bidirectional junction example), frozen on purpose rather than
+  generated: the test depends on the shape of this input. The reference lines
+  of the connecting roads (4, 5, 6) are laterally offset from the incoming
+  roads, so applying road.geometry.contact_point to them reports false
+  positives. The rule must skip every road that belongs to a junction.
+
+  Changed: the junction id, 1 -> 7, and two directly connected roads
+  (10, 11) added before <junction>. Road 10 ends at x=975, but its successor
+  is road 11 at contactPoint="end", which ends at x=925 ("start" would be
+  correct). The junction roads stay skipped while road 10, which does not
+  belong to a junction, is still reported.
+  Expected: 1 issue, at /OpenDRIVE/road[7].
+-->
 <OpenDRIVE>
     <header revMajor="1" revMinor="8" name="" version="1.00" date="Thu Aug 10 13:44:45 2023" north="0.0000000000000000e+00" south="0.0000000000000000e+00" east="0.0000000000000000e+00" west="0.0000000000000000e+00">
     </header>
