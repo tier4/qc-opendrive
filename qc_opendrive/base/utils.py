@@ -349,10 +349,18 @@ def get_road_link_element(
 
 
 def road_belongs_to_junction(road: etree._Element) -> bool:
-    road_junction_id = get_road_junction_id(road)
-    if road_junction_id is None or road_junction_id == -1:
+    # road@junction is xs:string, so it is not necessarily numeric. "-1", in any
+    # numeric spelling, is the sentinel for an ordinary road, and an empty value
+    # names no junction either. Any other value identifies the junction.
+    road_junction_id = road.get("junction")
+    if road_junction_id is None:
         return False
-    else:
+    road_junction_id = road_junction_id.strip()
+    if road_junction_id == "":
+        return False
+    try:
+        return float(road_junction_id) != -1
+    except ValueError:
         return True
 
 
