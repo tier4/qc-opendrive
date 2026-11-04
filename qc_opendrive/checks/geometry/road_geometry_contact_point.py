@@ -5,6 +5,7 @@
 # with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import logging
+import math
 from typing import List, Optional, Tuple
 
 from lxml import etree
@@ -80,6 +81,18 @@ def _get_xcessor_road_and_contact_point(
     return xcessor_road, contact_point
 
 
+def _is_evaluated(point: Optional[models.Point3D]) -> bool:
+    """Whether a reference line point was obtained and can be compared.
+
+    A coordinate given as NaN or INF is schema-valid (xs:double) and evaluates
+    to a non-finite point, which compares as equal to nothing and different from
+    nothing, so it would let a connection pass unchecked.
+    """
+    return point is not None and all(
+        math.isfinite(value) for value in (point.x, point.y, point.z)
+    )
+
+
 def _points_differ(a: models.Point3D, b: models.Point3D) -> bool:
     # allow error in the order of 1e-6 for floating point comparison of coordinates
     return any(
@@ -101,8 +114,8 @@ def _report_unchecked_connections(
 
     message = (
         f"{len(unchecked_road_ids)} road connection(s) were not checked because "
-        "a road reference line could not be evaluated (e.g. unsupported "
-        f"<poly3> geometry). Road id(s): {shown}."
+        "a road reference line could not be evaluated (e.g. a geometry with "
+        f"missing or non-finite attributes). Road id(s): {shown}."
     )
     logging.warning(message)
     checker_data.result.add_checker_summary(
@@ -156,13 +169,16 @@ def _check_road_geometry_contact_point(
             road_contact_point_xyz = get_road_contact_point_xyz(road)
             xcessor_contact_point_xyz = (
                 utils.get_point_xyz_from_contact_point(xcessor_road, contact_point)
-                if road_contact_point_xyz is not None
+                if _is_evaluated(road_contact_point_xyz)
                 else None
             )
 
             # A reference line that cannot be evaluated leaves the connection
             # unchecked. Record it so that it does not pass as a clean result.
-            if road_contact_point_xyz is None or xcessor_contact_point_xyz is None:
+            if not (
+                _is_evaluated(road_contact_point_xyz)
+                and _is_evaluated(xcessor_contact_point_xyz)
+            ):
                 unchecked_road_ids.append(str(road.get("id")))
                 continue
 

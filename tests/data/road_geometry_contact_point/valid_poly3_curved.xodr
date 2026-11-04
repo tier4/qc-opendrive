@@ -1,16 +1,28 @@
+<!--
+  Road 1 is the parabola v = 0.01 * u^2 for u in [0, 40], as a <poly3> at the
+  origin with hdg 0. Its @length is the closed-form arc length of that parabola,
+    L = (u/2) * sqrt(1 + 4c^2 u^2) + asinh(2cu) / (4c) = 43.929203350866665,
+  so its end is at (u, v) = (40, 16) with heading atan(2cu) = atan(0.8).
+  The expected positions come from this formula, not from the numerical method
+  in utils, so the test checks that method rather than restating it. u is not
+  arc length: evaluating u = s would put the end 3.929 m too far along u.
+
+  Road 2 starts exactly there (x=40, y=16, hdg=atan(0.8)), so the
+  connection is correct. Expected: 0 issues and no unchecked connection.
+-->
 <OpenDRIVE>
     <header revMajor="1" revMinor="8" name="" version="1.00" date="Tue Oct 29 09:28:28 2019"
             north="0.0000000000000000e+00" south="0.0000000000000000e+00" east="0.0000000000000000e+00"
             west="0.0000000000000000e+00"></header>
-    <road rule="LHT" name="" length="5.0000000000000000e+01" id="1" junction="-1">
+    <road rule="LHT" name="" length="4.3929203350866665e+01" id="1" junction="-1">
         <link>
             <successor elementType="road" elementId="2" contactPoint="start"/>
         </link>
         <type s="0.0000000000000000e+00" type="town" country="DE"/>
         <planView>
-            <geometry s="0.0000000000000000e+00" x="2.5000000000000000e+01" y="0.0000000000000000e+00"
-                      hdg="3.1415926535897931e+00" length="5.0000000000000000e+01">
-                <poly3 a="0.0000000000000000e+00" b="0.0000000000000000e+00" c="0.0000000000000000e+00" d="0.0000000000000000e+00"/>
+            <geometry s="0.0000000000000000e+00" x="0.0000000000000000e+00" y="0.0000000000000000e+00"
+                      hdg="0.0000000000000000e+00" length="4.3929203350866665e+01">
+                <poly3 a="0.0000000000000000e+00" b="0.0000000000000000e+00" c="1.0000000000000000e-02" d="0.0000000000000000e+00"/>
             </geometry>
         </planView>
         <elevationProfile>
@@ -60,8 +72,8 @@
         </link>
         <type s="0.0000000000000000e+00" type="town" country="DE"/>
         <planView>
-            <geometry s="0.0000000000000000e+00" x="-2.5000000000000000e+01" y="0.0000000000000000e+00"
-                      hdg="3.1415926535897931e+00" length="5.0000000000000000e+01">
+            <geometry s="0.0000000000000000e+00" x="4.0000000000000000e+01" y="1.6000000000000000e+01"
+                      hdg="6.7474094222355274e-01" length="5.0000000000000000e+01">
                 <line/>
             </geometry>
         </planView>

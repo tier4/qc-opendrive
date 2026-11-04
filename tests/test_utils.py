@@ -4,9 +4,11 @@
 # Public License, v. 2.0. If a copy of the MPL was not distributed
 # with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import math
+
 import pytest
 from lxml import etree
-from qc_opendrive.base import utils
+from qc_opendrive.base import models, utils
 
 
 def test_get_root_without_default_namespace() -> None:
@@ -340,3 +342,132 @@ def test_get_point_xyz_from_road(file_name, s, t, h, x, y, z) -> None:
     assert point.x == pytest.approx(x, abs=1e-6)
     assert point.y == pytest.approx(y, abs=1e-6)
     assert point.z == pytest.approx(z, abs=1e-6)
+
+
+# The parabola v = C * u^2 has a closed-form arc length, which gives expected
+# positions independent of the numerical method under test.
+PARABOLA_C = 0.01
+PARABOLA_U_END = 40.0
+
+
+def _parabola_arc_length(u: float) -> float:
+    c = PARABOLA_C
+    return (u / 2.0) * math.sqrt(1.0 + 4.0 * c * c * u * u) + math.asinh(
+        2.0 * c * u
+    ) / (4.0 * c)
+
+
+def _parabola_u_at(s: float) -> float:
+    """The u at arc length s, by bisection on the closed form."""
+    low, high = 0.0, PARABOLA_U_END
+    for _ in range(200):
+        middle = (low + high) / 2.0
+        if _parabola_arc_length(middle) < s:
+            low = middle
+        else:
+            high = middle
+    return (low + high) / 2.0
+
+
+PARABOLA_LENGTH = _parabola_arc_length(PARABOLA_U_END)
+PARABOLA_FRACTIONS = [0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0]
+
+
+def _parabola_param_poly3(p_range: models.ParamPoly3Range) -> models.ParamPoly3:
+    # u(p) = k*p, v(p) = C*(k*p)^2 traces the same parabola for p in [0, p_end].
+    p_end = 1.0 if p_range == models.ParamPoly3Range.NORMALIZED else PARABOLA_LENGTH
+    k = PARABOLA_U_END / p_end
+    return models.ParamPoly3(
+        u=models.Poly3(a=0.0, b=k, c=0.0, d=0.0),
+        v=models.Poly3(a=0.0, b=0.0, c=PARABOLA_C * k * k, d=0.0),
+        range=p_range,
+    )
+
+
+@pytest.mark.parametrize("fraction", PARABOLA_FRACTIONS)
+def test_poly3_is_evaluated_by_arc_length(fraction: float) -> None:
+    s = fraction * PARABOLA_LENGTH
+    u = _parabola_u_at(s)
+    poly3 = models.Poly3(a=0.0, b=0.0, c=PARABOLA_C, d=0.0)
+
+    point = utils.calculate_poly3_point(
+        s=s, poly3=poly3, s0=0.0, x0=0.0, y0=0.0, heading=0.0, length=PARABOLA_LENGTH
+    )
+    heading = utils.calculate_poly3_heading(
+        s=s, poly3=poly3, s0=0.0, heading=0.0, length=PARABOLA_LENGTH
+    )
+
+    assert point.x == pytest.approx(u, abs=1e-6)
+    assert point.y == pytest.approx(PARABOLA_C * u * u, abs=1e-6)
+    assert heading == pytest.approx(math.atan(2.0 * PARABOLA_C * u), abs=1e-9)
+
+
+@pytest.mark.parametrize(
+    "p_range", [models.ParamPoly3Range.NORMALIZED, models.ParamPoly3Range.ARC_LENGTH]
+)
+@pytest.mark.parametrize("fraction", PARABOLA_FRACTIONS)
+def test_param_poly3_is_evaluated_by_arc_length(
+    p_range: models.ParamPoly3Range, fraction: float
+) -> None:
+    s = fraction * PARABOLA_LENGTH
+    u = _parabola_u_at(s)
+    param_poly3 = _parabola_param_poly3(p_range)
+
+    point = utils.calculate_param_poly3_point(
+        s=s,
+        param_poly3=param_poly3,
+        s0=0.0,
+        x0=0.0,
+        y0=0.0,
+        heading=0.0,
+        length=PARABOLA_LENGTH,
+    )
+    heading = utils.calculate_param_poly3_heading(
+        s=s, param_poly3=param_poly3, s0=0.0, heading=0.0, length=PARABOLA_LENGTH
+    )
+
+    assert point.x == pytest.approx(u, abs=1e-6)
+    assert point.y == pytest.approx(PARABOLA_C * u * u, abs=1e-6)
+    assert heading == pytest.approx(math.atan(2.0 * PARABOLA_C * u), abs=1e-9)
+
+
+def test_param_poly3_keeps_its_ends_when_length_does_not_match() -> None:
+    # @length 10 % shorter than the curve: road.geometry.parampoly3.length_match
+    # reports that, but the geometry must still start and end where the
+    # polynomial does, so s is mapped onto the curve proportionally.
+    param_poly3 = _parabola_param_poly3(models.ParamPoly3Range.NORMALIZED)
+    length = PARABOLA_LENGTH * 0.9
+
+    start = utils.calculate_param_poly3_point(
+        s=0.0,
+        param_poly3=param_poly3,
+        s0=0.0,
+        x0=0.0,
+        y0=0.0,
+        heading=0.0,
+        length=length,
+    )
+    end = utils.calculate_param_poly3_point(
+        s=length,
+        param_poly3=param_poly3,
+        s0=0.0,
+        x0=0.0,
+        y0=0.0,
+        heading=0.0,
+        length=length,
+    )
+
+    assert (start.x, start.y) == (0.0, 0.0)
+    assert end.x == pytest.approx(PARABOLA_U_END, abs=1e-9)
+    assert end.y == pytest.approx(PARABOLA_C * PARABOLA_U_END**2, abs=1e-9)
+
+
+def test_straight_poly3_is_a_line() -> None:
+    poly3 = models.Poly3(a=0.0, b=0.0, c=0.0, d=0.0)
+    for s in (0.0, 12.5, 50.0):
+        point = utils.calculate_poly3_point(
+            s=s, poly3=poly3, s0=0.0, x0=25.0, y0=0.0, heading=math.pi, length=50.0
+        )
+        line = utils.calculate_line_point(s=s, s0=0.0, x0=25.0, y0=0.0, heading=math.pi)
+        assert point.x == pytest.approx(line.x, abs=1e-9)
+        assert point.y == pytest.approx(line.y, abs=1e-9)

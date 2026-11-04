@@ -1,0 +1,121 @@
+<!--
+  Road 1 is the parabola v = 0.01 * u^2 for u in [0, 40], as a <poly3> at the
+  origin with hdg 0. Its @length is the closed-form arc length of that parabola,
+    L = (u/2) * sqrt(1 + 4c^2 u^2) + asinh(2cu) / (4c) = 43.929203350866665,
+  so its end is at (u, v) = (40, 16) with heading atan(2cu) = atan(0.8).
+  The expected positions come from this formula, not from the numerical method
+  in utils, so the test checks that method rather than restating it. u is not
+  arc length: evaluating u = s would put the end 3.929 m too far along u.
+
+  Road 2 starts 1 cm off that end, at x=40.01. Expected: 2 issues, one for
+  each side of the connection (/OpenDRIVE/road[1] and /OpenDRIVE/road[2]).
+-->
+<OpenDRIVE>
+    <header revMajor="1" revMinor="8" name="" version="1.00" date="Tue Oct 29 09:28:28 2019"
+            north="0.0000000000000000e+00" south="0.0000000000000000e+00" east="0.0000000000000000e+00"
+            west="0.0000000000000000e+00"></header>
+    <road rule="LHT" name="" length="4.3929203350866665e+01" id="1" junction="-1">
+        <link>
+            <successor elementType="road" elementId="2" contactPoint="start"/>
+        </link>
+        <type s="0.0000000000000000e+00" type="town" country="DE"/>
+        <planView>
+            <geometry s="0.0000000000000000e+00" x="0.0000000000000000e+00" y="0.0000000000000000e+00"
+                      hdg="0.0000000000000000e+00" length="4.3929203350866665e+01">
+                <poly3 a="0.0000000000000000e+00" b="0.0000000000000000e+00" c="1.0000000000000000e-02" d="0.0000000000000000e+00"/>
+            </geometry>
+        </planView>
+        <elevationProfile>
+            <elevation s="0.0000000000000000e+00" a="0.0000000000000000e+00" b="0.0000000000000000e+00"
+                       c="0.0000000000000000e+00" d="0.0000000000000000e+00"/>
+        </elevationProfile>
+        <lateralProfile></lateralProfile>
+        <lanes>
+            <laneSection s="0.0000000000000000e+00">
+                <left>
+                    <lane id="1" type="driving" level="false">
+                        <link></link>
+                        <width sOffset="0.0000000000000000e+00" a="3.5000000000000000e+00" b="0.0000000000000000e+00"
+                               c="0.0000000000000000e+00" d="0.0000000000000000e+00"/>
+                        <roadMark sOffset="0.0000000000000000e+00" type="broken" weight="standard" color="standard"
+                                  width="1.3000000000000000e-01" laneChange="both"
+                                  height="1.9999999552965164e-02"></roadMark>
+                    </lane>
+                </left>
+                <center>
+                    <lane id="0">
+                        <link></link>
+                        <roadMark sOffset="0.0000000000000000e+00" type="solid" weight="standard" color="standard"
+                                  width="1.3000000000000000e-01" laneChange="none"
+                                  height="1.9999999552965164e-02"></roadMark>
+                    </lane>
+                </center>
+                <right>
+                    <lane id="-1" type="driving" level="false">
+                        <link></link>
+                        <width sOffset="0.0000000000000000e+00" a="3.5000000000000000e+00" b="0.0000000000000000e+00"
+                               c="0.0000000000000000e+00" d="0.0000000000000000e+00"/>
+                        <roadMark sOffset="0.0000000000000000e+00" type="broken" weight="standard" color="standard"
+                                  width="1.3000000000000000e-01" laneChange="both"
+                                  height="1.9999999552965164e-02"></roadMark>
+                    </lane>
+                </right>
+            </laneSection>
+        </lanes>
+        <objects></objects>
+        <signals></signals>
+        <surface></surface>
+    </road>
+    <road rule="LHT" name="" length="5.0000000000000000e+01" id="2" junction="-1">
+        <link>
+            <predecessor elementType="road" elementId="1" contactPoint="end"/>
+        </link>
+        <type s="0.0000000000000000e+00" type="town" country="DE"/>
+        <planView>
+            <geometry s="0.0000000000000000e+00" x="4.0009999999999998e+01" y="1.6000000000000000e+01"
+                      hdg="6.7474094222355274e-01" length="5.0000000000000000e+01">
+                <line/>
+            </geometry>
+        </planView>
+        <elevationProfile>
+            <elevation s="0.0000000000000000e+00" a="0.0000000000000000e+00" b="0.0000000000000000e+00"
+                       c="0.0000000000000000e+00" d="0.0000000000000000e+00"/>
+        </elevationProfile>
+        <lateralProfile></lateralProfile>
+        <lanes>
+            <laneSection s="0.0000000000000000e+00">
+                <left>
+                    <lane id="1" type="driving" level="false">
+                        <link></link>
+                        <width sOffset="0.0000000000000000e+00" a="3.5000000000000000e+00" b="0.0000000000000000e+00"
+                               c="0.0000000000000000e+00" d="0.0000000000000000e+00"/>
+                        <roadMark sOffset="0.0000000000000000e+00" type="broken" weight="standard" color="standard"
+                                  width="1.3000000000000000e-01" laneChange="both"
+                                  height="1.9999999552965164e-02"></roadMark>
+                    </lane>
+                </left>
+                <center>
+                    <lane id="0">
+                        <link></link>
+                        <roadMark sOffset="0.0000000000000000e+00" type="solid" weight="standard" color="standard"
+                                  width="1.3000000000000000e-01" laneChange="none"
+                                  height="1.9999999552965164e-02"></roadMark>
+                    </lane>
+                </center>
+                <right>
+                    <lane id="-1" type="driving" level="false">
+                        <link></link>
+                        <width sOffset="0.0000000000000000e+00" a="3.5000000000000000e+00" b="0.0000000000000000e+00"
+                               c="0.0000000000000000e+00" d="0.0000000000000000e+00"/>
+                        <roadMark sOffset="0.0000000000000000e+00" type="broken" weight="standard" color="standard"
+                                  width="1.3000000000000000e-01" laneChange="both"
+                                  height="1.9999999552965164e-02"></roadMark>
+                    </lane>
+                </right>
+            </laneSection>
+        </lanes>
+        <objects></objects>
+        <signals></signals>
+        <surface></surface>
+    </road>
+</OpenDRIVE>
