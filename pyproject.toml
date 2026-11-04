@@ -12,7 +12,7 @@ packages = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-asam-qc-baselib = "^1.0.0rc1"
+asam-qc-baselib = { git = "https://github.com/tier4/qc-baselib-py.git", branch = "integration/all-fixes" }
 lxml = "^5.2.2"
 numpy = ">=1.26.0"
 scipy = "^1.14.0"

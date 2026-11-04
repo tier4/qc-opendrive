@@ -13,19 +13,23 @@ files = [
 
 [[package]]
 name = "asam-qc-baselib"
-version = "1.0.0rc1"
+version = "1.1.0"
 description = "Python base library for ASAM Quality Checker Framework"
 optional = false
-python-versions = "<4.0,>=3.10"
-files = [
-    {file = "asam_qc_baselib-1.0.0rc1-py3-none-any.whl", hash = "sha256:f946be44ccf31d94ba0e72d93e86888ed70925dc4d1d46287edf69c4b6c29581"},
-    {file = "asam_qc_baselib-1.0.0rc1.tar.gz", hash = "sha256:6631bd0ca6b9126fe9244d4bd0092d1a108429c773afcb43a6e6dd3c78cde76f"},
-]
+python-versions = "^3.10"
+files = []
+develop = false
 
 [package.dependencies]
-lxml = ">=5.2.2,<6.0.0"
-pydantic = ">=2.7.2,<3.0.0"
-pydantic-xml = ">=2.11.0,<3.0.0"
+lxml = "^5.2.2"
+pydantic = "^2.7.2"
+pydantic-xml = "^2.11.0"
+
+[package.source]
+type = "git"
+url = "https://github.com/tier4/qc-baselib-py.git"
+reference = "integration/all-fixes"
+resolved_reference = "6ab1d727eb237e4afa84ee7c87e1e9b6619d7da0"
 
 [[package]]
 name = "black"
@@ -773,4 +777,4 @@ docs = ["Sphinx", "elementpath (>=4.4.0,<5.0.0)", "jinja2", "sphinx-rtd-theme"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "38843d6ec103d3e0f5ff932bb4b9f2ba826d5fdd2cb7aa9858854120aa3d1d7c"
+content-hash = "d2f427baaa2aabde7c9a7936893090f64c772773488d646b5cb07d7d373a8c24"
