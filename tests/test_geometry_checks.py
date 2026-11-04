@@ -206,10 +206,10 @@ def test_road_geometry_param_poly3_normalized_range(
     cleanup_files()
 
 
-# Examples from https://publications.pages.asam.net/standards/ASAM_OpenDRIVE/ASAM_OpenDRIVE_Specification/latest/specification/10_roads/10_03_road_linkage.html#top-86fc414c-6211-4777-b40e-466d4551d23e
 @pytest.mark.parametrize(
     "target_file,issue_count,issue_xpath",
     [
+        # Examples from https://publications.pages.asam.net/standards/ASAM_OpenDRIVE/ASAM_OpenDRIVE_Specification/latest/specification/10_roads/10_03_road_linkage.html#top-86fc414c-6211-4777-b40e-466d4551d23e
         (
             "valid_1",
             0,
@@ -226,6 +226,16 @@ def test_road_geometry_param_poly3_normalized_range(
             [],
         ),
         (
+            "valid_missing_link",
+            0,
+            [],
+        ),
+        (
+            "valid_unevaluable_geometry",
+            0,
+            [],
+        ),
+        (
             "invalid",
             2,
             [
@@ -238,6 +248,32 @@ def test_road_geometry_param_poly3_normalized_range(
             1,
             [
                 "/OpenDRIVE/road[1]",
+            ],
+        ),
+        # Copies of tests/data/junctions_connection_one_link_to_incoming/Ex_Bidirectional_Junction_valid.xodr
+        # with the junction id changed. The reference line of a connecting road is
+        # laterally offset from the incoming road, so the rule must not be applied
+        # to roads that belong to a junction.
+        (
+            "valid_junction_road",
+            0,
+            [],
+        ),
+        # The same junction with a non-numeric junction id, which road@junction
+        # allows since it is an xs:string.
+        (
+            "valid_junction_road_string_id",
+            0,
+            [],
+        ),
+        # The same junction plus a pair of directly connected roads whose successor
+        # contact point is wrong: the junction roads stay skipped while the road
+        # that does not belong to a junction is still reported.
+        (
+            "invalid_junction_and_road",
+            1,
+            [
+                "/OpenDRIVE/road[7]",
             ],
         ),
     ],
@@ -263,6 +299,40 @@ def test_road_geometry_contact_point(
         issue_severity,
         geometry.road_geometry_contact_point.CHECKER_ID,
     )
+    cleanup_files()
+
+
+@pytest.mark.parametrize(
+    "target_file,unchecked",
+    [
+        ("valid_1", False),
+        ("valid_missing_link", False),
+        ("valid_unevaluable_geometry", True),
+    ],
+)
+def test_road_geometry_contact_point_reports_unchecked_connections(
+    target_file: str,
+    unchecked: bool,
+    monkeypatch,
+) -> None:
+    # A road whose reference line cannot be evaluated is skipped without an
+    # issue, which must not read as a clean result: the summary says so.
+    base_path = "tests/data/road_geometry_contact_point/"
+    target_file_path = os.path.join(base_path, f"{target_file}.xodr")
+    create_test_config(target_file_path)
+    launch_main(monkeypatch)
+
+    result = Result()
+    result.load_from_file(REPORT_FILE_PATH)
+    summary = result.get_checker_result(
+        constants.BUNDLE_NAME, geometry.road_geometry_contact_point.CHECKER_ID
+    ).summary
+    assert ("were not checked" in summary) == unchecked
+    assert (
+        result.get_checker_status(geometry.road_geometry_contact_point.CHECKER_ID)
+        == StatusType.COMPLETED
+    )
+
     cleanup_files()
 
 
