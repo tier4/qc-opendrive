@@ -219,8 +219,12 @@ def run_checks(config: Configuration, result: Result) -> None:
     if result.all_checkers_completed_without_issue(
         {basic.valid_xml_document.CHECKER_ID}
     ):
-        checker_data.input_file_xml_root = utils.get_root_without_default_namespace(
-            checker_data.xml_file_path
+        # Every checker reports its issue locations through this tree's
+        # getpath(), which is quadratic in the number of roads unless memoised.
+        # The wrap stays here, where the tree is handed to the checkers, so that
+        # get_root_without_default_namespace() keeps returning a real lxml tree.
+        checker_data.input_file_xml_root = utils.MemoisedPathTree(
+            utils.get_root_without_default_namespace(checker_data.xml_file_path)
         )
 
     execute_checker(basic.root_tag_is_opendrive, checker_data, version_required=False)

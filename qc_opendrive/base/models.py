@@ -7,15 +7,21 @@
 from dataclasses import dataclass
 from enum import Enum
 from lxml import etree
-from typing import Optional
+from typing import Optional, TYPE_CHECKING, Union
 
 from qc_baselib import Configuration, Result
+
+if TYPE_CHECKING:
+    # Imported for the annotation only: utils imports this module.
+    from qc_opendrive.base.utils import MemoisedPathTree
 
 
 @dataclass
 class CheckerData:
     xml_file_path: str
-    input_file_xml_root: Optional[etree._ElementTree]
+    # A MemoisedPathTree in practice, which is an etree._ElementTree in
+    # everything but the cost of its getpath(). See utils.MemoisedPathTree.
+    input_file_xml_root: Optional[Union[etree._ElementTree, "MemoisedPathTree"]]
     config: Configuration
     result: Result
     schema_version: Optional[str]
